@@ -20,12 +20,14 @@
 Classes dealing with amqp signalling between jobbers, workers and supervisors.
 """
 import socket
+import time
 
 import kombu
 import kombu.entity
 import kombu.messaging
 
 from openquake.utils import config
+from openquake.utils import general
 
 
 def amqp_connect():
@@ -43,6 +45,47 @@ def amqp_connect():
                                      channel=channel)
     exchange.declare()
     return connection, channel, exchange
+
+@general.singleton
+class AMQPWrapper(object):
+    def __init__(self):
+        self.amqp = amqp_connect()
+    def get(self):
+        return self.amqp
+    def close(self):
+        connection, channel, exchange = self.amqp
+        channel.close()
+        connection.close()
+
+def amqp_timeit(method):
+    """
+        Decorator for timing methods that triggers an amqp message
+        The message is sent through rabbitmq to a consumer that prints
+        an estimate of progress of the Job
+        (similar to a 'download progress bar')
+    """
+
+    def _timed(*args, **kw):
+        """Wrapped function for timed methods that triggers an amqp message"""
+
+        connection, channel, exchange = AMQPWrapper().get()
+
+        producer = kombu.messaging.Producer(channel,
+             exchange=exchange, serializer="json")
+
+        timestart = time.time()
+        result = method(*args, **kw)
+
+        timeend = time.time()
+
+        producer.publish({'meth_name': method.__name__,
+            'args':args, 'kw': kw, 'time_spent': timeend - timestart},
+             routing_key='PROGRESS')
+
+
+        return result
+
+    return _timed
 
 
 class AMQPMessageConsumer(object):
