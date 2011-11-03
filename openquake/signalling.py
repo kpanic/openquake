@@ -57,35 +57,42 @@ class AMQPWrapper(object):
         channel.close()
         connection.close()
 
-def amqp_timeit(method):
+def amqp_timeit(**kwargs):
     """
         Decorator for timing methods that triggers an amqp message
         The message is sent through rabbitmq to a consumer that prints
         an estimate of progress of the Job
         (similar to a 'download progress bar')
+
+        **kwargs are for providing extra data to the decorator, for example
+        the job type, etc
     """
+    def wrap(method):
 
-    def _timed(*args, **kw):
-        """Wrapped function for timed methods that triggers an amqp message"""
+        def _timed(*args, **kw):
+            """
+            Wrapped function for timed methods that triggers an amqp message
+            """
 
-        connection, channel, exchange = AMQPWrapper().get()
+            connection, channel, exchange = AMQPWrapper().get()
 
-        producer = kombu.messaging.Producer(channel,
-             exchange=exchange, serializer="json")
+            producer = kombu.messaging.Producer(channel,
+                 exchange=exchange, serializer="json")
 
-        timestart = time.time()
-        result = method(*args, **kw)
+            timestart = time.time()
+            result = method(*args, **kw)
 
-        timeend = time.time()
+            timeend = time.time()
 
-        producer.publish({'meth_name': method.__name__,
-            'args':args, 'kw': kw, 'time_spent': timeend - timestart},
-             routing_key='PROGRESS')
+            producer.publish({'meth_name': method.__name__,
+                'args':args, 'kwargs': kwargs,
+                'time_spent': timeend - timestart},
+                 routing_key='PROGRESS')
 
 
-        return result
-
-    return _timed
+            return result
+        return _timed
+    return wrap
 
 
 class AMQPMessageConsumer(object):
