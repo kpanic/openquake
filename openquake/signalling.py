@@ -48,12 +48,21 @@ def amqp_connect():
 
 @general.singleton
 class AMQPWrapper(object):
+    """
+        amqp_connect class wrapper to avoid to create multiple amqp connections
+    """
     def __init__(self):
         self.amqp = amqp_connect()
     def get(self):
+        """
+            returns connection, channel, exchange
+        """
         return self.amqp
     def close(self):
-        connection, channel, exchange = self.amqp
+        """
+            closes channel, connection
+        """
+        connection, channel, _ = self.amqp
         channel.close()
         connection.close()
 
@@ -68,13 +77,14 @@ def amqp_timeit(**kwargs):
         the job type, etc
     """
     def wrap(method):
+        """ wrapper """
 
         def _timed(*args, **kw):
             """
             Wrapped function for timed methods that triggers an amqp message
             """
 
-            connection, channel, exchange = AMQPWrapper().get()
+            _, channel, exchange = AMQPWrapper().get()
 
             producer = kombu.messaging.Producer(channel,
                  exchange=exchange, serializer="json")
