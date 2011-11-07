@@ -43,6 +43,7 @@ from openquake.input import logictree
 from openquake.output import hazard as hazard_output
 from openquake.utils import config
 from openquake.utils import tasks as utils_tasks
+from openquake import signalling
 
 LOG = logs.LOG
 
@@ -224,6 +225,7 @@ class ClassicalMixin(BasePSHAMixin):
         value = value.strip() if value else None
         return 2 * multiprocessing.cpu_count() if value is None else int(value)
 
+    @signalling.amqp_timeit
     def do_curves(self, sites, realizations,
                   serializer=None,
                   the_task=tasks.compute_hazard_curve):
@@ -283,6 +285,7 @@ class ClassicalMixin(BasePSHAMixin):
         return value is not None and value.strip()
 
     # pylint: disable=R0913
+    @signalling.amqp_timeit
     def do_means(self, sites, realizations,
                  curve_serializer=None,
                  curve_task=tasks.compute_mean_curves,
@@ -339,6 +342,7 @@ class ClassicalMixin(BasePSHAMixin):
             map_serializer(sites, self.poes_hazard_maps)
 
     # pylint: disable=R0913
+    @signalling.amqp_timeit
     def do_quantiles(self, sites, realizations, quantiles,
                      curve_serializer=None,
                      curve_task=tasks.compute_quantile_curves,

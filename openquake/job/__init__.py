@@ -23,6 +23,7 @@ import re
 import subprocess
 import urlparse
 import logging
+import threading
 
 from ConfigParser import ConfigParser, RawConfigParser
 from datetime import datetime
@@ -51,7 +52,9 @@ from openquake.job.params import (
     ARRAY_RE)
 from openquake.kvs import mark_job_as_current
 from openquake.logs import LOG
+from openquake import signalling
 from openquake.utils import config as oq_config
+from openquake.utils import general
 
 RE_INCLUDE = re.compile(r'^(.*)_INCLUDE')
 
@@ -78,6 +81,8 @@ def run_job(job_file, output_type):
     close_connection()
 
     job_pid = os.fork()
+
+
     if not job_pid:
         # job executor process
         try:
@@ -99,6 +104,18 @@ def run_job(job_file, output_type):
         job.supervisor_pid = supervisor_pid
         job.job_pid = job_pid
         job.save()
+
+
+        routing_key = 'JOB_PROGRESS.%s' % a_job.job_id
+        animated_pbar = general.AnimatedProgressBar(width=80)
+        # show the initial 0% progressbar
+        animated_pbar.show_progress()
+        consumer = signalling.JobProgressConsumer(a_job, job_pid,
+                animated_pbar,
+                routing_key=routing_key,
+                timeout=1)
+        consumer_thread = threading.Thread(target=consumer.run)
+        consumer_thread.start()
         supervisor.supervise(job_pid, a_job.job_id)
         return
 
@@ -107,9 +124,13 @@ def run_job(job_file, output_type):
     # ignore Ctrl-C as well as supervisor process does. thus only
     # job executor terminates on SIGINT
     supervisor.ignore_sigint()
+
     # wait till both child processes are done
     os.waitpid(job_pid, 0)
     os.waitpid(supervisor_pid, 0)
+
+    # after processes are done, terminate the consumer thread
+#    consumer_thread.join()
 
 
 def parse_config_file(config_file):

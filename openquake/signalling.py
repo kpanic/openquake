@@ -21,13 +21,14 @@ Classes dealing with amqp signalling between jobbers, workers and supervisors.
 """
 import socket
 import time
+import functools
+import multiprocessing
 
 import kombu
-import kombu.entity
-import kombu.messaging
 
 from openquake.utils import config
 from openquake.utils import general
+from openquake import supervising
 
 
 def amqp_connect():
@@ -66,7 +67,7 @@ class AMQPWrapper(object):
         channel.close()
         connection.close()
 
-def amqp_timeit(**kwargs):
+def amqp_timeit(method):
     """
         Decorator for timing methods that triggers an amqp message
         The message is sent through rabbitmq to a consumer that prints
@@ -76,33 +77,30 @@ def amqp_timeit(**kwargs):
         **kwargs are for providing extra data to the decorator, for example
         the job type, etc
     """
-    def wrap(method):
-        """ wrapper """
+    @functools.wraps(method)
+    def _timed(self, *args, **kwargs):
+        """
+        Wrapped function for timed methods that triggers an amqp message
+        """
 
-        def _timed(*args, **kw):
-            """
-            Wrapped function for timed methods that triggers an amqp message
-            """
+        _, channel, exchange = AMQPWrapper().get()
 
-            _, channel, exchange = AMQPWrapper().get()
+        producer = kombu.messaging.Producer(channel,
+             exchange=exchange, serializer="json")
 
-            producer = kombu.messaging.Producer(channel,
-                 exchange=exchange, serializer="json")
+        timestart = time.time()
+        result = method(self, *args, **kwargs)
+        timeend = time.time()
 
-            timestart = time.time()
-            result = method(*args, **kw)
+        routing_key = 'JOB_PROGRESS.%s' % self.job_id
 
-            timeend = time.time()
-
-            producer.publish({'meth_name': method.__name__,
-                'args':args, 'kwargs': kwargs,
-                'time_spent': timeend - timestart},
-                 routing_key='PROGRESS')
+        producer.publish({'meth_name': method.__name__,
+            'time_spent': timeend - timestart},
+             routing_key=routing_key)
 
 
-            return result
-        return _timed
-    return wrap
+        return result
+    return _timed
 
 
 class AMQPMessageConsumer(object):
@@ -201,3 +199,25 @@ class AMQPMessageConsumer(object):
         and terminate execution.
         """
         pass
+
+
+class JobProgressConsumer(AMQPMessageConsumer):
+
+    def __init__(self, job, job_pid, progress_bar, *args, **kwargs):
+        super(JobProgressConsumer, self).__init__(*args, **kwargs)
+        self.pbar = progress_bar
+        self.job_pid = job_pid
+        self.job = job
+    def message_callback(self, payload, msg):
+        cur_time = payload.get('time_spent')
+        max_time = ((int(self.job.params['NUMBER_OF_LOGIC_TREE_SAMPLES']) *
+                len(self.job.sites)) / (2 *
+                    multiprocessing.cpu_count()))
+        print max_time
+        self.pbar.end =  max_time
+        self.pbar + cur_time
+        self.pbar.show_progress()
+
+    def timeout_callback(self):
+        if not supervising.is_pid_running(self.job_pid):
+            raise StopIteration()
